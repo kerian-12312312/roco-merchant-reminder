@@ -1,0 +1,38 @@
+name: Roco Merchant Check
+
+on:
+  schedule:
+    # 北京时间 08:05 / 12:05 / 16:05 / 20:05 = UTC 00:05 / 04:05 / 08:05 / 12:05
+    # 故意比刷新点晚 5 分钟，给数据源留出更新时间
+    - cron: '5 0,4,8,12 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build config without secrets
+        shell: pwsh
+        env:
+          ROCO_API_KEY: ${{ secrets.ROCO_API_KEY }}
+          ROCO_PUSH_TOKEN: ${{ secrets.ROCO_PUSH_TOKEN }}
+          WATCHLIST: ${{ vars.WATCHLIST }}
+        run: |
+          $watchlist = if ($env:WATCHLIST) {
+            @($env:WATCHLIST -split ',' | ForEach-Object { $_.Trim() })
+          } else {
+            @('国王球', '棱镜球', '炫彩精灵蛋')
+          }
+          $cfg = [ordered]@{
+            api         = [ordered]@{ baseUrl = 'https://wegame.shallow.ink'; apiKey = $env:ROCO_API_KEY }
+            notify      = [ordered]@{ provider = 'wx'; token = $env:ROCO_PUSH_TOKEN }
+            watchlist   = $watchlist
+            refreshTimes = @('08:00', '12:00', '16:00', '20:00')
+          }
+          $cfg | ConvertTo-Json -Depth 5 | Set-Content -Path config.json -Encoding UTF8
+
+      - name: Run check
+        shell: pwsh
+        run: ./roco.ps1 check
