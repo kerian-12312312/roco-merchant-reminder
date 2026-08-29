@@ -278,34 +278,45 @@ function Invoke-Check($cfg) {
     $active = @($groups | Where-Object { Test-IsActive $_ })
     $watch = @($cfg.watchlist)
     $hits = @()
+    $activeNames = @()
     foreach ($p in $active) {
         $name = Get-ItemName $p
+        $activeNames += $name
+        $matched = $false
         foreach ($w in $watch) {
-            if ($name -like "*$w*") { $hits += $name; break }
+            if ($name -like "*$w*") { $hits += $name; $matched = $true; break }
         }
     }
     $hits = @($hits | Select-Object -Unique)
+    $activeNames = @($activeNames | Select-Object -Unique)
 
     $dateKey = "{0:yyyy-MM-dd}-{1}" -f $bj, $round
     $statePath = Get-StatePath
     $state = Get-State $statePath
-    if ($state.sent -contains $dateKey) {
+    # GitHub Actions 手动触发(workflow_dispatch)总是推送；否则沿用「每轮只推一次」
+    $isManual = ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch')
+    if (-not $isManual -and $state.sent -contains $dateKey) {
         Write-Host "$dateKey 已提醒过，跳过"
         return
     }
-    if ($hits.Count -eq 0) {
-        Write-Host "$dateKey 无匹配商品"
-        return
+
+    if ($hits.Count -gt 0) {
+        # 有命中：单个用商品名做标题；多个改成「有多个值得购买的东西」
+        $text = if ($hits.Count -eq 1) { "$($hits[0])" } else { '有多个值得购买的东西' }
+        $desp = "命中：$($hits -join '、')`n第${round}轮 $($RoundLabels[$round])`n$(Get-Date $bj -Format 'yyyy-MM-dd HH:mm')"
+    }
+    else {
+        # 无命中：也提醒，标题沿用老格式「远行商人 · 第几轮」，正文列出当前在售
+        $text = "远行商人 · 第${round}轮"
+        $desp = "第${round}轮 $($RoundLabels[$round])`n本轮无你关注的商品。`n在售：$($activeNames -join '、')`n$(Get-Date $bj -Format 'yyyy-MM-dd HH:mm')"
     }
 
-    # 单个命中用商品名做标题；多个命中改成「有多个值得购买的东西」
-    $text = if ($hits.Count -eq 1) { "$($hits[0])" } else { '有多个值得购买的东西' }
-    $desp = "命中：$($hits -join '、')`n第${round}轮 $($RoundLabels[$round])`n$(Get-Date $bj -Format 'yyyy-MM-dd HH:mm')"
     try {
         Send-Xtuis $cfg $text $desp
         $state.sent = @($state.sent + $dateKey)
         Set-State $statePath $state
-        Write-Host "已推送: $($hits -join '、')"
+        if ($hits.Count -gt 0) { Write-Host "已推送命中: $($hits -join '、')" }
+        else { Write-Host "已推送第${round}轮在售商品(无关注)" }
     }
     catch {
         Write-Warning "推送失败: $($_.Exception.Message)"
