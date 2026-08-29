@@ -23,7 +23,7 @@ jobs:
           $watchlist = if ($env:WATCHLIST) {
             @($env:WATCHLIST -split ',' | ForEach-Object { $_.Trim() })
           } else {
-            @('国王球', '棱镜球', '炫彩精灵蛋')
+            @('炫彩精灵蛋', '国王球', '棱镜球', '祝福项链', '祝福项坠', '奇异血脉秘药', '首领血脉秘药')
           }
           $cfg = [ordered]@{
             api         = [ordered]@{ baseUrl = 'https://wegame.shallow.ink'; apiKey = $env:ROCO_API_KEY }
