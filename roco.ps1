@@ -268,6 +268,7 @@ function Invoke-Check($cfg) {
     catch { Write-Warning "获取商人数据失败: $($_.Exception.Message)"; return }
 
     $groups = Get-ProductGroups $resp
+    $maps = Get-PriceLimitMaps $resp
     $bj = Get-BeijingTime
     $round = Get-CurrentRound $bj
     if ($round -eq 0) {
@@ -290,6 +291,18 @@ function Invoke-Check($cfg) {
     $hits = @($hits | Select-Object -Unique)
     $activeNames = @($activeNames | Select-Object -Unique)
 
+    # 生成本轮全部在售清单(带价格、限购)，命中/未命中正文都引用它
+    $fullListLines = @()
+    $ix = 0
+    foreach ($name in $activeNames) {
+        $ix++
+        $rawPrice = if ($maps.price.ContainsKey($name)) { "$($maps.price[$name])" } else { '' }
+        $price = if ($rawPrice -ne '' -and $rawPrice -ne '0') { $rawPrice } else { '--' }
+        $limit = if ($maps.limit.ContainsKey($name)) { $maps.limit[$name] } else { '--' }
+        $fullListLines += ("{0}. {1}  价格:{2}  限购:{3}" -f $ix, $name, $price, $limit)
+    }
+    $fullList = $fullListLines -join "`n"
+
     $dateKey = "{0:yyyy-MM-dd}-{1}" -f $bj, $round
     $statePath = Get-StatePath
     $state = Get-State $statePath
@@ -303,12 +316,12 @@ function Invoke-Check($cfg) {
     if ($hits.Count -gt 0) {
         # 有命中：单个用商品名做标题；多个改成「有多个值得购买的东西」
         $text = if ($hits.Count -eq 1) { "$($hits[0])" } else { '有多个值得购买的东西' }
-        $desp = "命中：$($hits -join '、')`n第${round}轮 $($RoundLabels[$round])`n$(Get-Date $bj -Format 'yyyy-MM-dd HH:mm')"
+        $desp = "命中：$($hits -join '、')`n第${round}轮 $($RoundLabels[$round])`n—— 本轮全部在售 ——`n$fullList`n$(Get-Date $bj -Format 'yyyy-MM-dd HH:mm')"
     }
     else {
         # 无命中：也提醒，标题沿用老格式「远行商人 · 第几轮」，正文列出当前在售
         $text = "远行商人 · 第${round}轮"
-        $desp = "第${round}轮 $($RoundLabels[$round])`n本轮无你关注的商品。`n在售：$($activeNames -join '、')`n$(Get-Date $bj -Format 'yyyy-MM-dd HH:mm')"
+        $desp = "第${round}轮 $($RoundLabels[$round])`n本轮无你关注的商品。`n—— 本轮全部在售 ——`n$fullList`n$(Get-Date $bj -Format 'yyyy-MM-dd HH:mm')"
     }
 
     try {
