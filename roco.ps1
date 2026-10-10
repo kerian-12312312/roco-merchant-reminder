@@ -72,12 +72,26 @@ function Get-MerchantInfo($cfg) {
     if (-not $key) { throw '缺少 API Key：请在 config.json 的 api.apiKey 填写，或用 -ApiKey 传入。' }
     $base = $cfg.api.baseUrl.TrimEnd('/')
     $url = "$base/api/v1/games/rocom/merchant/info?refresh=true"
-    $resp = Invoke-RestMethod -Uri $url -Method Get -Headers @{ 'X-API-Key' = $key } -TimeoutSec 20
-    # 真实接口返回 { code, message, data }，取出 data 以便后续直接读 merchantActivities 等字段
-    if ($resp.PSObject.Properties.Name -contains 'data' -and $null -ne $resp.data) {
-        return $resp.data
+    # 数据源偶发 502/525/超时：最多尝试 5 次，间隔 5 分钟；鉴权错误(401/403)重试无意义，立即抛出
+    $maxAttempts = 5
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            $resp = Invoke-RestMethod -Uri $url -Method Get -Headers @{ 'X-API-Key' = $key } -TimeoutSec 60
+            # 真实接口返回 { code, message, data }，取出 data 以便后续直接读 merchantActivities 等字段
+            if ($resp.PSObject.Properties.Name -contains 'data' -and $null -ne $resp.data) {
+                return $resp.data
+            }
+            return $resp
+        }
+        catch {
+            $code = $null
+            try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+            if ($code -in 401, 403) { throw }
+            if ($attempt -ge $maxAttempts) { throw }
+            Write-Warning "获取商人数据失败(第 $attempt/$maxAttempts 次): $($_.Exception.Message)，5 分钟后重试"
+            Start-Sleep -Seconds 300
+        }
     }
-    return $resp
 }
 
 function Get-ProductGroups($resp) {
@@ -265,7 +279,12 @@ function Invoke-List($cfg) {
 
 function Invoke-Check($cfg) {
     try { $resp = Get-MerchantInfo $cfg }
-    catch { Write-Warning "获取商人数据失败: $($_.Exception.Message)"; return }
+    catch {
+        Write-Warning "获取商人数据失败: $($_.Exception.Message)"
+        # 云端(GitHub Actions)重试仍失败则报错标红；本地 daemon 保持警告并继续循环
+        if ($env:GITHUB_ACTIONS -eq 'true') { throw }
+        return
+    }
 
     $groups = Get-ProductGroups $resp
     $maps = Get-PriceLimitMaps $resp
